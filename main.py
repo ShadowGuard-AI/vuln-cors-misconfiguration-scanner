@@ -43,47 +43,57 @@ def scan_cors(url, origins, user_agent, timeout, allow_redirects, verbosity):
     if verbosity >= 1:
         logging.info(f"Scanning URL: {url}")
 
+    reached = 0
     for origin in origins:
         try:
             headers = {'Origin': origin, 'User-Agent': user_agent}
+            # No raise_for_status: CORS headers on error responses are read too.
             response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=allow_redirects)
-            response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+            reached += 1
 
             acao = response.headers.get('Access-Control-Allow-Origin')
             acac = response.headers.get('Access-Control-Allow-Credentials')
+            credentials = bool(acac) and acac.strip().lower() == 'true'
 
             if acao:
+                acao = acao.strip()
                 if verbosity >= 1:
                     logging.info(f"Origin: {origin}")
+                    logging.info(f"Response status: {response.status_code}")
                     logging.info(f"Access-Control-Allow-Origin: {acao}")
                     if acac:
                         logging.info(f"Access-Control-Allow-Credentials: {acac}")
                     else:
                          logging.info("Access-Control-Allow-Credentials: Not Present")
+                logging.debug(f"Raw CORS headers for origin {origin}: ACAO={acao} ACAC={acac}")
 
                 if acao == '*':
-                    logging.warning(f"Potential CORS vulnerability: Wildcard (*) is used for Access-Control-Allow-Origin with Origin: {origin}")
-                elif origin in acao:
-                    logging.info(f"CORS configured correctly for origin: {origin}")
-                elif acao != 'null' and acao != origin and acao != None:
-                    logging.warning(f"Potential CORS vulnerability: Access-Control-Allow-Origin is set to {acao} which doesn't match the origin {origin}")
-                elif acao == 'null' and origin == 'null':
-                    logging.info("CORS configured correctly for origin: null")
-                elif acao == 'null' and origin != 'null':
-                    logging.warning("Potential CORS vulnerability: Null origin allowed, but a specific origin was requested.")
-
+                    if credentials:
+                        logging.warning(f"CRITICAL CORS vulnerability: Wildcard (*) Access-Control-Allow-Origin with credentials allowed for origin: {origin}")
+                    else:
+                        logging.warning(f"Potential CORS vulnerability: Wildcard (*) is used for Access-Control-Allow-Origin with Origin: {origin}")
+                elif acao == 'null':
+                    if credentials:
+                        logging.warning(f"CRITICAL CORS vulnerability: Null origin allowed with credentials (Access-Control-Allow-Origin: null) for origin: {origin}")
+                    else:
+                        logging.warning(f"Potential CORS vulnerability: Null origin allowed (Access-Control-Allow-Origin: null) for origin: {origin}")
+                elif acao == origin:
+                    if credentials:
+                        logging.warning(f"CRITICAL CORS vulnerability: Origin {origin} is reflected with credentials allowed (credentialed reflection)")
+                    else:
+                        logging.warning(f"Potential CORS vulnerability: Origin {origin} is reflected in Access-Control-Allow-Origin")
+                else:
+                    logging.info(f"Access-Control-Allow-Origin is set to {acao}, which does not match the probe origin {origin}; a browser would block this origin, so this is not a finding for origin: {origin}")
 
             else:
-                if verbosity >= 2:
-                    logging.info(f"No Access-Control-Allow-Origin header found for origin: {origin}")
+                logging.debug(f"No Access-Control-Allow-Origin header found for origin: {origin} (status {response.status_code})")
 
         except requests.exceptions.RequestException as e:
-            if verbosity >= 0: # always log errors
-                logging.error(f"Error for origin {origin}: {e}")
+            logging.error(f"Error for origin {origin}: {e}")
         except Exception as e:
-             if verbosity >= 0: # always log errors
-                logging.error(f"An unexpected error occurred for origin {origin}: {e}")
+            logging.error(f"An unexpected error occurred for origin {origin}: {e}")
 
+    return reached
 
 
 def main():
@@ -101,7 +111,14 @@ def main():
         sys.exit(1)
 
 
-    scan_cors(args.url, args.origins, args.user_agent, args.timeout, args.allow_redirects, args.verbosity)
+    # Apply the verbosity setting to the logger: 0 errors only, 1 info, 2 debug.
+    logging.getLogger().setLevel({0: logging.ERROR, 1: logging.INFO, 2: logging.DEBUG}[args.verbosity])
+
+    reached = scan_cors(args.url, args.origins, args.user_agent, args.timeout, args.allow_redirects, args.verbosity)
+
+    if reached == 0:
+        logging.error("No origin probe reached the target. Scan not performed; no verdict is available.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     # Usage examples:
