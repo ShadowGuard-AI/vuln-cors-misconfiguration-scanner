@@ -46,6 +46,9 @@ def scan_cors(url, origins, user_agent, timeout, allow_redirects, verbosity):
     reached = 0
     for origin in origins:
         try:
+            # A plain GET, never an OPTIONS preflight. I am reading how the
+            # server answers an actual cross origin request, so a policy
+            # that only shows up on preflight is outside what this sees.
             headers = {'Origin': origin, 'User-Agent': user_agent}
             # No raise_for_status: CORS headers on error responses are read too.
             response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=allow_redirects)
@@ -53,6 +56,9 @@ def scan_cors(url, origins, user_agent, timeout, allow_redirects, verbosity):
 
             acao = response.headers.get('Access-Control-Allow-Origin')
             acac = response.headers.get('Access-Control-Allow-Credentials')
+            # Only the exact word true counts, after trimming and lowering.
+            # A header that says yes or 1 is reported as present above but
+            # never raises a finding to the credentialed level.
             credentials = bool(acac) and acac.strip().lower() == 'true'
 
             if acao:
@@ -106,6 +112,9 @@ def main():
         logging.error("Invalid URL provided. Please provide a valid URL.")
         sys.exit(1)
 
+    # The origin check anchors at the start only. An origin carrying a path
+    # or other trailing text passes this gate and is sent as written, which
+    # is on the operator: browsers never send such an Origin header.
     if not all(re.match(r'^https?://', o) or o == 'null' for o in args.origins):
         logging.error("Invalid origin provided. Origins must start with http://, https:// or be 'null'.")
         sys.exit(1)
