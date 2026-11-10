@@ -112,6 +112,10 @@ def main():
         logging.error("Invalid URL provided. Please provide a valid URL.")
         sys.exit(1)
 
+    if args.timeout <= 0:
+        logging.error("Timeout must be greater than 0.")
+        sys.exit(1)
+
     # The origin check anchors at the start only. An origin carrying a path
     # or other trailing text passes this gate and is sent as written, which
     # is on the operator: browsers never send such an Origin header.
